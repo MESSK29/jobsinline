@@ -13,7 +13,7 @@ const port = process.env.PORT || 3000;
 const JOB_ROLES_FILE = path.join(__dirname, "jobrolespskillsframeworks.xlsx");
 
 // MongoDB connection
-mongoose.connect("mongodb+srv://messk29:Saibaba12#@messk29.nvpwpfw.mongodb.net/?retryWrites=true&w=majority&appName=MESSK29", {
+mongoose.connect("mongodb+srv://messk29:Saibaba12@messk29.nvpwpfw.mongodb.net/?retryWrites=true&w=majority&appName=MESSK29", {
     useNewUrlParser: true,
     useUnifiedTopology: true
 }).then(() => console.log("Connected to MongoDB"))
