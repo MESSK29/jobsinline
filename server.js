@@ -29,7 +29,7 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.model("User", UserSchema);
 
 // Google Generative AI setup
-const apiKey =|"AIzaSyCCHFgeeK7ToNo4nQ6PivPsJB4IakqHxj4"; // Use env var on Render
+const apiKey ="AIzaSyCCHFgeeK7ToNo4nQ6PivPsJB4IakqHxj4"; // Use env var on Render
 const genAI = new GoogleGenerativeAI(apiKey);
 
 // Middleware
