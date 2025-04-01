@@ -18,7 +18,7 @@ mongoose.connect("mongodb+srv://messk29:Saibaba12@messk29.nvpwpfw.mongodb.net/?r
     useUnifiedTopology: true
 }).then(() => console.log("Connected to MongoDB"))
   .catch(err => console.error("MongoDB connection error:", err));
-  
+
 // User schema and model
 const UserSchema = new mongoose.Schema({
     Username: { type: String, required: true, unique: true },
@@ -28,8 +28,8 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", UserSchema);
 
-// Use environment variable for API key
-const apiKey = "AIzaSyCCHFgeeK7ToNo4nQ6PivPsJB4IakqHxj4"; // Replace with your key or use env var
+// Google Generative AI setup
+const apiKey =|"AIzaSyCCHFgeeK7ToNo4nQ6PivPsJB4IakqHxj4"; // Use env var on Render
 const genAI = new GoogleGenerativeAI(apiKey);
 
 // Middleware
@@ -37,7 +37,7 @@ app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Excel file handling (for job roles only)
+// Excel file handling with fallback
 function readExcelData(filePath) {
     try {
         if (!fs.existsSync(filePath)) {
@@ -61,14 +61,11 @@ function saveExcelData(filePath, data) {
         xlsx.utils.book_append_sheet(workbook, worksheet, "Sheet1");
         xlsx.writeFile(filePath);
         console.log(`Successfully saved to ${filePath}`);
+        return true;
     } catch (error) {
         console.error(`Error saving Excel file ${filePath}:`, error);
-        throw new Error(`Failed to save Excel: ${error.message}`);
+        return false;
     }
-}
-
-function saveJobRoles(jobRoles) {
-    saveExcelData(JOB_ROLES_FILE, jobRoles);
 }
 
 function loadJobRoles() {
@@ -78,7 +75,7 @@ function loadJobRoles() {
 // MongoDB user handling
 async function saveUsers(users) {
     try {
-        await User.insertMany(users);
+        await User.insertMany(users, { ordered: false });
         console.log("Users saved to MongoDB");
     } catch (error) {
         console.error("Error saving users to MongoDB:", error);
@@ -97,7 +94,6 @@ async function loadUsers() {
 
 // Authentication endpoint
 app.post("/auth", async (req, res) => {
-    console.log("Full request body:", req.body);
     const { action, username, password, email, phone } = req.body;
 
     try {
@@ -105,68 +101,29 @@ app.post("/auth", async (req, res) => {
             const users = await loadUsers();
             const user = users.find((u) => u.Username === username);
             if (!user) {
-                return res.status(404).json({ 
-                    success: false, 
-                    message: "No username found! Please register.", 
-                    redirect: "register" 
-                });
+                return res.status(404).json({ success: false, message: "No username found! Please register.", redirect: "register" });
             }
             if (user.Password !== password) {
-                return res.status(401).json({ 
-                    success: false, 
-                    message: "Incorrect password!" 
-                });
+                return res.status(401).json({ success: false, message: "Incorrect password!" });
             }
-            res.status(200).json({ 
-                success: true, 
-                message: "Login successful!", 
-                redirect: "main", 
-                username 
-            });
+            res.status(200).json({ success: true, message: "Login successful!", redirect: "main", username });
         } else if (action === "register") {
             const users = await loadUsers();
             if (users.some((u) => u.Username === username)) {
-                return res.status(400).json({ 
-                    success: false, 
-                    message: "Username already exists!" 
-                });
+                return res.status(400).json({ success: false, message: "Username already exists!" });
             }
             if (!phone || phone.trim() === "") {
-                return res.status(400).json({
-                    success: false,
-                    message: "Phone number is required!"
-                });
+                return res.status(400).json({ success: false, message: "Phone number is required!" });
             }
             const newUser = { Username: username, Email: email, Phone: phone, Password: password };
-            console.log("Adding new user:", newUser);
-            try {
-                await saveUsers([newUser]); // Save single user
-                console.log("User data saved successfully");
-            } catch (saveError) {
-                console.error("Failed to save user data:", saveError);
-                return res.status(500).json({
-                    success: false,
-                    message: "Failed to save user data",
-                    error: saveError.message
-                });
-            }
-            res.status(201).json({ 
-                success: true, 
-                message: "Registration successful! You can now log in." 
-            });
+            await saveUsers([newUser]);
+            res.status(201).json({ success: true, message: "Registration successful! You can now log in." });
         } else {
-            res.status(400).json({ 
-                success: false, 
-                message: "Invalid action" 
-            });
+            res.status(400).json({ success: false, message: "Invalid action" });
         }
     } catch (error) {
         console.error("Error in /auth endpoint:", error);
-        res.status(500).json({ 
-            success: false, 
-            message: "Server error during authentication",
-            error: error.message 
-        });
+        res.status(500).json({ success: false, message: "Server error during authentication", error: error.message });
     }
 });
 
@@ -174,7 +131,7 @@ app.post("/auth", async (req, res) => {
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const uploadDir = path.join(__dirname, "uploads");
-        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
@@ -192,9 +149,14 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
         console.error("No file uploaded");
         return res.status(400).json({ success: false, error: "No file uploaded" });
     }
+    if (!jobRole) {
+        console.error("No job role provided");
+        return res.status(400).json({ success: false, error: "No job role provided" });
+    }
 
+    let filePath;
     try {
-        const filePath = req.file.path;
+        filePath = req.file.path;
         const dataBuffer = fs.readFileSync(filePath);
         const data = await pdfParse(dataBuffer);
         const resumeText = data.text;
@@ -207,15 +169,18 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
             analysisResult = analyzeResumeFromExcel(resumeText, jobRole, jobData);
         } else {
             analysisResult = await analyzeResumeWithAI(resumeText, jobRole);
+            if (analysisResult.probability !== 0) { // Only save if AI analysis succeeds
+                const newJobEntry = {
+                    "JOB ROLES": jobRole,
+                    "PROGRAMMING SKILLS": analysisResult.requiredSkills || "",
+                    "FRAMEWORKS": analysisResult.requiredFrameworks || "",
+                };
+                excelData.push(newJobEntry);
+                if (!saveExcelData(JOB_ROLES_FILE, excelData)) {
+                    console.warn("Failed to save new job role to Excel, continuing without saving");
+                }
+            }
             analysisResult.fromChatbot = true;
-            const newJobEntry = {
-                "JOB ROLES": jobRole,
-                "PROGRAMMING SKILLS": analysisResult.requiredSkills || "",
-                "FRAMEWORKS": analysisResult.requiredFrameworks || "",
-            };
-            excelData.push(newJobEntry);
-            saveJobRoles(excelData);
-            console.log(`Saved new job role "${jobRole}" to ${JOB_ROLES_FILE}`);
         }
 
         const response = {
@@ -228,11 +193,18 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
             fromChatbot: analysisResult.fromChatbot || false,
         };
 
-        fs.unlinkSync(filePath);
         res.status(200).json(response);
     } catch (error) {
-        console.error("Error processing request:", error);
-        res.status(500).json({ success: false, error: "Error processing request" });
+        console.error("Error processing /upload request:", error);
+        res.status(500).json({ success: false, error: "Error processing resume analysis", details: error.message });
+    } finally {
+        if (filePath && fs.existsSync(filePath)) {
+            try {
+                fs.unlinkSync(filePath);
+            } catch (unlinkError) {
+                console.error("Error deleting file:", unlinkError);
+            }
+        }
     }
 });
 
@@ -250,18 +222,14 @@ app.post("/chatbot", async (req, res) => {
         res.status(200).json({ success: true, response: responseText });
     } catch (error) {
         console.error("Chatbot Error:", error);
-        res.status(500).json({ success: false, error: "Error processing chatbot request" });
+        res.status(500).json({ success: false, error: "Error processing chatbot request", details: error.message });
     }
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error("Global error:", err.stack);
-    res.status(500).json({ 
-        success: false, 
-        error: "Something went wrong!",
-        details: err.message 
-    });
+    res.status(500).json({ success: false, error: "Something went wrong!", details: err.message });
 });
 
 // Start server
@@ -269,7 +237,7 @@ app.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);
 });
 
-// Resume analysis functions (unchanged)
+// Resume analysis functions
 function analyzeResumeFromExcel(resumeText, jobRole, jobData) {
     const requiredSkills = jobData["PROGRAMMING SKILLS"] ? jobData["PROGRAMMING SKILLS"].split(",").map(skill => skill.trim()) : [];
     const requiredFrameworks = jobData["FRAMEWORKS"] ? jobData["FRAMEWORKS"].split(",").map(framework => framework.trim()) : [];
