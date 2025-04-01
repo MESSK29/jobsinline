@@ -29,7 +29,7 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.model("User", UserSchema);
 
 // Google Generative AI setup
-const apiKey ="AIzaSyCCHFgeeK7ToNo4nQ6PivPsJB4IakqHxj4"; // Use env var on Render
+const apiKey = "AIzaSyCCHFgeeK7ToNo4nQ6PivPsJB4IakqHxj4";
 const genAI = new GoogleGenerativeAI(apiKey);
 
 // Middleware
@@ -41,13 +41,15 @@ app.use(express.urlencoded({ extended: true }));
 function readExcelData(filePath) {
     try {
         if (!fs.existsSync(filePath)) {
-            console.log(`File ${filePath} not found, returning empty array`);
+            console.log(`File ${filePath} not found, initializing empty array`);
             return [];
         }
         const workbook = xlsx.readFile(filePath);
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        return xlsx.utils.sheet_to_json(worksheet);
+        const data = xlsx.utils.sheet_to_json(worksheet);
+        console.log(`Loaded ${data.length} job roles from ${filePath}`);
+        return data;
     } catch (error) {
         console.error(`Error reading Excel file ${filePath}:`, error);
         return [];
@@ -56,11 +58,14 @@ function readExcelData(filePath) {
 
 function saveExcelData(filePath, data) {
     try {
+        if (!data || !Array.isArray(data)) {
+            throw new Error("Invalid data format for saving to Excel");
+        }
         const worksheet = xlsx.utils.json_to_sheet(data);
         const workbook = xlsx.utils.book_new();
         xlsx.utils.book_append_sheet(workbook, worksheet, "Sheet1");
-        xlsx.writeFile(filePath);
-        console.log(`Successfully saved to ${filePath}`);
+        fs.writeFileSync(filePath, xlsx.write(workbook, { bookType: "xlsx", type: "buffer" }));
+        console.log(`Successfully saved ${data.length} job roles to ${filePath}`);
         return true;
     } catch (error) {
         console.error(`Error saving Excel file ${filePath}:`, error);
@@ -72,7 +77,7 @@ function loadJobRoles() {
     return readExcelData(JOB_ROLES_FILE);
 }
 
-// MongoDB user handling
+// MongoDB user handling (unchanged)
 async function saveUsers(users) {
     try {
         await User.insertMany(users, { ordered: false });
@@ -92,10 +97,9 @@ async function loadUsers() {
     }
 }
 
-// Authentication endpoint
+// Authentication endpoint (unchanged)
 app.post("/auth", async (req, res) => {
     const { action, username, password, email, phone } = req.body;
-
     try {
         if (action === "login") {
             const users = await loadUsers();
@@ -166,9 +170,12 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
         let analysisResult;
 
         if (jobData) {
+            console.log(`Found job role ${jobRole} in Excel data`);
             analysisResult = analyzeResumeFromExcel(resumeText, jobRole, jobData);
         } else {
+            console.log(`Job role ${jobRole} not found, querying AI`);
             analysisResult = await analyzeResumeWithAI(resumeText, jobRole);
+            analysisResult.fromChatbot = true;
             if (analysisResult.probability !== 0) { // Only save if AI analysis succeeds
                 const newJobEntry = {
                     "JOB ROLES": jobRole,
@@ -176,11 +183,15 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
                     "FRAMEWORKS": analysisResult.requiredFrameworks || "",
                 };
                 excelData.push(newJobEntry);
+                console.log(`Attempting to save new job role: ${JSON.stringify(newJobEntry)}`);
                 if (!saveExcelData(JOB_ROLES_FILE, excelData)) {
-                    console.warn("Failed to save new job role to Excel, continuing without saving");
+                    console.warn(`Failed to save new job role ${jobRole} to Excel`);
+                } else {
+                    console.log(`Successfully saved new job role ${jobRole} to Excel`);
                 }
+            } else {
+                console.log(`AI analysis failed for ${jobRole}, skipping save`);
             }
-            analysisResult.fromChatbot = true;
         }
 
         const response = {
@@ -201,6 +212,7 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
         if (filePath && fs.existsSync(filePath)) {
             try {
                 fs.unlinkSync(filePath);
+                console.log(`Deleted uploaded file: ${filePath}`);
             } catch (unlinkError) {
                 console.error("Error deleting file:", unlinkError);
             }
@@ -208,12 +220,10 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
     }
 });
 
-// Chatbot endpoint
+// Chatbot endpoint (unchanged)
 app.post("/chatbot", async (req, res) => {
     const { message } = req.body;
-
     if (!message) return res.status(400).json({ success: false, error: "No message provided" });
-
     try {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const prompt = `Respond to the following user query naturally and conversationally: "${message}"`;
@@ -237,7 +247,7 @@ app.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);
 });
 
-// Resume analysis functions
+// Resume analysis functions (unchanged)
 function analyzeResumeFromExcel(resumeText, jobRole, jobData) {
     const requiredSkills = jobData["PROGRAMMING SKILLS"] ? jobData["PROGRAMMING SKILLS"].split(",").map(skill => skill.trim()) : [];
     const requiredFrameworks = jobData["FRAMEWORKS"] ? jobData["FRAMEWORKS"].split(",").map(framework => framework.trim()) : [];
